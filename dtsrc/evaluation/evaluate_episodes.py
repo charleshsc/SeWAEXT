@@ -69,6 +69,7 @@ def evaluate_episode_rtg(
         state_dim,
         act_dim,
         model,
+        swa_model=None,
         max_ep_len=1000,
         scale=1000.,
         state_mean=0.,
@@ -113,6 +114,7 @@ def evaluate_episode_rtg(
             rewards.to(dtype=torch.float32),
             target_return.to(dtype=torch.float32),
             timesteps.to(dtype=torch.long),
+            swa_model=swa_model,
         )
         actions[-1] = action
         action = action.detach().cpu().numpy()

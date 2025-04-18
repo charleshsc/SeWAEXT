@@ -65,6 +65,8 @@ def train_step(device, epoch, model, train_loader, optimizer, criterion, val_loa
 
         if (batch_idx+1) % merge_k == 0:
             ema_model.apply(model)
+    
+    ema_model.apply(model)
 
 
 # 测试函数

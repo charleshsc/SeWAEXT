@@ -67,6 +67,10 @@ def train_step(device, epoch, model, train_loader, optimizer, criterion, val_loa
         if (batch_idx+1) % merge_k == 0:
             swa_model.update_parameters(model)
             swa_scheduler.step()  # 调整 lr
+    
+    swa_model.update_parameters(model)
+    swa_scheduler.step()  # 调整 lr
+
 
 
 # 测试函数

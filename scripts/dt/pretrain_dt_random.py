@@ -16,7 +16,6 @@ from torch.utils.tensorboard import SummaryWriter
 from dtsrc.evaluation.evaluate_episodes import evaluate_episode, evaluate_episode_rtg
 from dtsrc.models.decision_transformer import DecisionTransformer
 from dtsrc.models.mlp_bc import MLPBCModel
-from dtsrc.training.merge_trainer import Trainer
 
 from logger import logger, setup_logger
 
@@ -281,10 +280,8 @@ def experiment(
         lambda steps: min((steps+1)/warmup_steps, 1)
     )
 
-    if opt != 'merge':
-        from dtsrc.training.seq_trainer import SequenceTrainer as Trainer
-    elif opt == 'merge':
-        from dtsrc.training.merge_trainer import Trainer
+
+    from dtsrc.training.random_trainer import Trainer
 
 
     if model_type == 'dt':
@@ -351,7 +348,7 @@ if __name__ == '__main__':
     parser.add_argument('--log_to_wandb', '-w', type=bool, default=False)
     parser.add_argument('--save_path', type=str, default='./results/DT/')
     
-    parser.add_argument('--opt', type=str, default='merge', choices=['merge', 'normal'])
+    parser.add_argument('--opt', type=str, default='random')
     parser.add_argument('--save_interval', type=int, default=5)
     parser.add_argument('--merge_number', type=int, default=100)
     parser.add_argument('--merge_k', type=int, default=10)

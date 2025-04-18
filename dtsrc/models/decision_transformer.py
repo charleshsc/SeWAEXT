@@ -100,7 +100,7 @@ class DecisionTransformer(TrajectoryModel):
 
         return state_preds, action_preds, return_preds
 
-    def get_action(self, states, actions, rewards, returns_to_go, timesteps, **kwargs):
+    def get_action(self, states, actions, rewards, returns_to_go, timesteps, swa_model=None, **kwargs):
         # we don't care about the past rewards in this model
 
         states = states.reshape(1, -1, self.state_dim)
@@ -134,7 +134,12 @@ class DecisionTransformer(TrajectoryModel):
         else:
             attention_mask = None
 
-        _, action_preds, return_preds = self.forward(
-            states, actions, None, returns_to_go, timesteps, attention_mask=attention_mask, **kwargs)
+        if swa_model is None:
+            _, action_preds, return_preds = self.forward(
+                states, actions, None, returns_to_go, timesteps, attention_mask=attention_mask, **kwargs)
+        else:
+            _, action_preds, return_preds = swa_model(
+                states, actions, None, returns_to_go, timesteps, attention_mask=attention_mask, **kwargs)
+
 
         return action_preds[0,-1]

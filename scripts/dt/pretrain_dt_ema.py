@@ -16,9 +16,10 @@ from torch.utils.tensorboard import SummaryWriter
 from dtsrc.evaluation.evaluate_episodes import evaluate_episode, evaluate_episode_rtg
 from dtsrc.models.decision_transformer import DecisionTransformer
 from dtsrc.models.mlp_bc import MLPBCModel
-from dtsrc.training.merge_trainer import Trainer
+from dtsrc.training.seq_trainer import SequenceTrainer as Trainer
 
 from logger import logger, setup_logger
+from src.ema import EMA
 
 def save_checkpoint(state,name):
   filename =name
@@ -269,23 +270,18 @@ def experiment(
         raise NotImplementedError
 
     model = model.to(device=device)
+    ema = EMA(model, decay=0.9)
 
     warmup_steps = variant['warmup_steps']
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=variant['learning_rate'],
         weight_decay=variant['weight_decay'],
-    )
+    )    
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
         lambda steps: min((steps+1)/warmup_steps, 1)
     )
-
-    if opt != 'merge':
-        from dtsrc.training.seq_trainer import SequenceTrainer as Trainer
-    elif opt == 'merge':
-        from dtsrc.training.merge_trainer import Trainer
-
 
     if model_type == 'dt':
         trainer = Trainer(
@@ -310,10 +306,11 @@ def experiment(
             loss_fn=lambda s_hat, a_hat, r_hat, s, a, r: torch.mean((a_hat - a)**2),
             eval_fns=[eval_episodes(tar) for tar in env_targets],
         )
+    trainer.ema_model = ema
 
     best_ret = -10000
     for iter in range(variant['epochs']):
-        outputs = trainer.train_iteration(num_steps=variant['num_steps_per_iter'], iter_num=iter+1, logger=logger, save_path=os.path.join(variant['save_path'], exp_prefix))
+        outputs = trainer.train_iteration(num_steps=variant['num_steps_per_iter'], iter_num=iter+1, logger=logger, save_path=os.path.join(variant['save_path'], exp_prefix), k=variant['merge_number'])
         ret = outputs['Best_return_mean']
         if ret > best_ret:
             state = {
@@ -351,7 +348,7 @@ if __name__ == '__main__':
     parser.add_argument('--log_to_wandb', '-w', type=bool, default=False)
     parser.add_argument('--save_path', type=str, default='./results/DT/')
     
-    parser.add_argument('--opt', type=str, default='merge', choices=['merge', 'normal'])
+    parser.add_argument('--opt', type=str, default='ema')
     parser.add_argument('--save_interval', type=int, default=5)
     parser.add_argument('--merge_number', type=int, default=100)
     parser.add_argument('--merge_k', type=int, default=10)
