@@ -112,13 +112,14 @@ def main():
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--num-workers', type=int, default=8)
     parser.add_argument('--local-rank', type=int, default=0)
-    parser.add_argument('--log-dir', type=str, default='runs/vit')
+    parser.add_argument('--log-dir', type=str, default='results/vit')
     parser.add_argument('--use-wandb', action='store_true', help='Use Weights & Biases logging')
 
+    parser.add_argument('--opt', type=str, default='random')
     parser.add_argument('--save_interval', type=int, default=5)
-    parser.add_argument('--merge_number', type=int, default=4)
+    parser.add_argument('--merge_number', type=int, default=5)
     parser.add_argument('--merge_k', type=int, default=2)
-    parser.add_argument('--merge_epoch', type=int, default=3)
+    parser.add_argument('--merge_epoch', type=int, default=1)
     parser.add_argument('--t', type=float, default=1.0)
     args = parser.parse_args()
 
@@ -126,7 +127,7 @@ def main():
 
     log_dir = args.log_dir
     timestr = time.strftime("%y%m%d-%H%M%S")
-    log_dir = log_dir + f'/AdamW_{args.seed}_{timestr}'
+    log_dir = log_dir + f'/{args.opt}_{args.seed}_{timestr}'
     Path(log_dir).mkdir(exist_ok=True, parents=True)
     setup_logger(variant=vars(args), log_dir=log_dir)
 
@@ -167,45 +168,24 @@ def main():
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device, epoch, writer, rank)
         val_loss, val_acc = validate(model, val_loader, criterion, device, epoch, writer, rank)
 
-        if epoch % 5 != 1:
-            state_dict_list.append(model.module.state_dict())
+        state_dict_list.append(model.module.state_dict())
         
         if len(state_dict_list) == args.merge_number:
-            eval_logits = []
-            val_accs = []
             ada_model = MergeNet(copy.deepcopy(model.module), state_dict_list, temperature=args.t, k=args.merge_k).to(device)
-            ada_model = DDP(ada_model, device_ids=[args.local_rank])
-            ada_optimizer = torch.optim.AdamW(ada_model.module.collect_trainable_params(), lr=args.lr)
-
-            train_loader_, val_loader_, train_sampler_ = build_imagenet_dataset(
-                args.data_path, 64, args.num_workers, distributed=True
-            )
-            for merge_epoch in range(1):
-                if train_sampler_:
-                    train_sampler_.set_epoch(merge_epoch)
-
-                train_loss_, train_acc_ = train_one_epoch(ada_model, train_loader_, ada_optimizer, criterion, device, epoch, None, rank, 'Merge')
-                logit = ada_model.module.get_model(rank=rank)
-                val_loss_, val_acc_ = validate(ada_model, val_loader_, criterion, device, epoch, None, rank, True, 'Merge Val')
-                eval_logits.append(ada_model.module.mask_logit.detach().cpu().numpy())   
-                val_accs.append(val_acc_)
+            random_numbers = random.sample(range(args.merge_number), args.merge_k)
+            for i in random_numbers:
+                ada_model.mask_logit.data[i] = 1.
             
-            ada_model.module.get_model()
-            infer_model = ada_model.module.infer_model.train()
+            ada_model.get_model()
+            infer_model = ada_model.infer_model.train()
             for p in infer_model.parameters():
                 p.requires_grad = True
             model.module.load_state_dict(infer_model.state_dict())
             optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
             state_dict_list = []
             del ada_model
-            del ada_optimizer
             gc.collect()
             torch.cuda.empty_cache()
-
-            if rank == 0:
-                logger.log(f'epoch {epoch}')
-                logger.log(str(eval_logits))
-                logger.log(str(val_accs))
 
         if rank == 0:
             tqdm.write(f"[Epoch {epoch}] "
