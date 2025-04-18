@@ -18,9 +18,11 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from decimal import Decimal
 
-from src.dataset import get_data_loader
+from src.dataset import get_dataloader_cifar10
 from src.model import ResNet5, ResNet3, ResNet1
 from src.merge_utils import MergeNet
+from src.sam import SAM
+
 
 def set_seed(seed):
     random.seed(seed)
@@ -37,8 +39,8 @@ def train_step(device, epoch, model, train_loader, optimizer, criterion, val_loa
     train_loss = 0
     correct = 0
     total = 0
-
     state_dict_list = []
+
     batch_bar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch} [{descript}]", leave=False)
 
     for batch_idx, (inputs, targets) in batch_bar:
@@ -48,7 +50,12 @@ def train_step(device, epoch, model, train_loader, optimizer, criterion, val_loa
         outputs = model(inputs)
         loss = criterion(outputs, targets)
         loss.backward()
-        optimizer.step()
+        optimizer.first_step(zero_grad=True)
+
+        outputs = model(inputs)
+        loss = criterion(outputs, targets)
+        loss.backward()
+        optimizer.second_step(zero_grad=True)
 
         train_loss += loss.item()
         _, predicted = outputs.max(1)
@@ -60,42 +67,7 @@ def train_step(device, epoch, model, train_loader, optimizer, criterion, val_loa
                 'acc': f"{100.*correct/total:.2f}%"
             })
         
-        if epoch % args.save_interval == 0:
-            state_dict_list.append(model.state_dict())
         
-        if len(state_dict_list) == args.merge_number:
-            ada_model = MergeNet(copy.deepcopy(model), state_dict_list, temperature=args.t, k=args.merge_k).to(device)
-            random_numbers = random.sample(range(args.merge_number), args.merge_k)
-            for i in random_numbers:
-                ada_model.mask_logit.data[i] = 1.
-            
-            ada_model.get_model()
-            infer_model = ada_model.infer_model.train()
-            for p in infer_model.parameters():
-                p.requires_grad = True
-            model.load_state_dict(infer_model.state_dict())
-            optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
-            state_dict_list = []
-            del ada_model
-            gc.collect()
-            torch.cuda.empty_cache()
-    
-    if len(state_dict_list) != 0:
-        ada_model = MergeNet(copy.deepcopy(model), state_dict_list, temperature=args.t, k=args.merge_k).to(device)
-        random_numbers = random.sample(range(len(state_dict_list)), args.merge_k)
-        for i in random_numbers:
-            ada_model.mask_logit.data[i] = 1.
-        
-        ada_model.get_model()
-        infer_model = ada_model.infer_model.train()
-        for p in infer_model.parameters():
-            p.requires_grad = True
-        model.load_state_dict(infer_model.state_dict())
-        optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
-        state_dict_list = []
-        del ada_model
-        gc.collect()
-        torch.cuda.empty_cache()
 
 def merge_step(device, epoch, model, train_loader, optimizer, criterion, descript='Train'):
     model.train()
@@ -156,8 +128,9 @@ def main():
     parser.add_argument("--data_name", type=str, default="cifar100")
     parser.add_argument('--data', type=int, default=1,
                         choices=[1, 2],)
+    parser.add_argument('--data_path', type=str, default="/ailab/user/hushengchao/dataset/cifar10.npy")
     parser.add_argument("--seed", type=int, default=123)
-    parser.add_argument("--model", type=str, default="ResNet3")
+    parser.add_argument("--model", type=str, default="ResNet1")
 
     parser.add_argument("--save_interval", type=int, default=1)
     parser.add_argument("--start_save", type=int, default=1)
@@ -172,9 +145,9 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-2)
     parser.add_argument("--lr_decay", action='store_true')
 
-    parser.add_argument('--opt', type=str, default='random', choices=['merge', 'normal', 'random'])
-    parser.add_argument('--merge_number', type=int, default=100)
-    parser.add_argument('--merge_k', type=int, default=20)
+    parser.add_argument('--opt', type=str, default='sam')
+    parser.add_argument('--merge_number', type=int, default=50)
+    parser.add_argument('--merge_k', type=int, default=10)
     parser.add_argument('--merge_epoch', type=int, default=1)
     parser.add_argument('--t', type=float, default=1.0)
     
@@ -182,23 +155,24 @@ def main():
     set_seed(args.seed)
 
     # 数据加载
-    train_loader, val_loader, test_loader = get_data_loader(args.bs)
+    train_loader, val_loader, test_loader = get_dataloader_cifar10(args)
 
     # 训练配置
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if "ResNet1" in args.model:
-        model = ResNet1(num_classes=100).to(device)
+        model = ResNet1(num_classes=10).to(device)
     elif "ResNet3" in args.model:
-        model = ResNet3(num_classes=100).to(device)
+        model = ResNet3(num_classes=10).to(device)
     elif "ResNet5" in args.model:
-        model = ResNet5(num_classes=100).to(device)
+        model = ResNet5(num_classes=10).to(device)
     
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9, weight_decay=5e-4)
+    base_optimizer = optim.SGD
+    optimizer = SAM(model.parameters(), base_optimizer, lr=0.1, momentum=0.9, weight_decay=5e-4)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
     timestr = time.strftime("%y%m%d-%H%M%S")
-    log_path = f'{args.log_dir}/Cifar100/random-{args.model}-{args.seed}-{timestr}'
+    log_path = f'{args.log_dir}/Cifar10/{args.opt}-{args.model}-{args.seed}-{timestr}'
     if not os.path.exists(log_path):
         os.makedirs(log_path)
 
@@ -213,7 +187,6 @@ def main():
         val_acc.append(test(device, model, test_loader, criterion, 'Test_ACC'))
         scheduler.step()
         learning_rates_log.append(scheduler.get_last_lr())
-
 
     with open(os.path.join(log_path, 'train_acc.npy'), 'wb') as f:
         np.save(f, np.array(train_acc))

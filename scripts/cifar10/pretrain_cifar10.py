@@ -151,7 +151,7 @@ def main():
     parser.add_argument("--eval", action='store_true')
     parser.add_argument("--eval_interval", type=int, default=100)
     parser.add_argument("--eval_max_iter", type=int, default=100000)
-    parser.add_argument('--log_dir', type=str, default='runs/')
+    parser.add_argument('--log_dir', type=str, default='results/')
 
     # optimizer
     parser.add_argument("--bs", type=int, default=128)
