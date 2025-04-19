@@ -19,6 +19,8 @@ from datasets import load_dataset
 from src.dataset import get_data_loader
 from src.model import TransformerClassifier
 from src.merge_utils import MergeNet
+from src.sam import SAM
+
 
 def set_seed(seed):
     random.seed(seed)
@@ -63,7 +65,7 @@ parser.add_argument('--num_layers', type=int, default=4)
 parser.add_argument('--num_classes', type=int, default=4)
 parser.add_argument('--max_len', type=int, default=512)
 
-parser.add_argument('--opt', type=str, default='merge')
+parser.add_argument('--opt', type=str, default='sam')
 parser.add_argument('--save_interval', type=int, default=5)
 parser.add_argument('--merge_number', type=int, default=10)
 parser.add_argument('--merge_k', type=int, default=5)
@@ -128,7 +130,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 model = TransformerClassifier(vocab_size, args.embed_size, args.num_heads, args.hidden_dim, args.num_layers, args.num_classes, args.max_len).to(device)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+base_optimizer = torch.optim.Adam
+optimizer = SAM(model.parameters(), base_optimizer, lr=0.001)
 criterion = nn.CrossEntropyLoss()
 
 # 训练循环
@@ -147,34 +150,15 @@ for epoch in range(args.epochs):
         outputs = model(texts)
         loss = criterion(outputs, labels)
         loss.backward()
-        optimizer.step()
+        optimizer.first_step(zero_grad=True)
+
+        outputs = model(texts)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.second_step(zero_grad=True)
 
         total_loss += loss.item()
         total_correct += (outputs.argmax(1) == labels).sum().item()
-        
-        if 'merge' in args.opt:
-            if global_iter % args.save_interval == 0:
-                state_dict_list.append(model.state_dict())
-        
-            if len(state_dict_list) == args.merge_number:
-                ada_model = MergeNet(copy.deepcopy(model), state_dict_list, temperature=args.t, k=args.merge_k).to(device)
-                ada_optimizer = torch.optim.AdamW(ada_model.collect_trainable_params(), lr=args.lr)
-
-                for mp in range(args.merge_epoch):
-                    for texts, labels in val_loader:
-                        texts, labels = texts.to(device), labels.to(device)
-                        ada_optimizer.zero_grad()
-                        outputs = ada_model(texts)
-                        loss = criterion(outputs, labels)
-                        loss.backward()
-                        ada_optimizer.step()
-                
-                ada_model.get_model()
-                infer_model = ada_model.infer_model
-
-                model.load_state_dict(infer_model.state_dict())
-                optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
-                state_dict_list = []
 
         global_iter += 1
         if global_iter % 100 == 0:
