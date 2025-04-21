@@ -121,7 +121,7 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-2)
     parser.add_argument("--lr_decay", action='store_true')
 
-    parser.add_argument('--opt', type=str, default='merge', choices=['merge', 'normal'])
+    parser.add_argument('--opt', type=str, default='swa')
     parser.add_argument('--merge_number', type=int, default=100)
     parser.add_argument('--merge_k', type=int, default=20)
     parser.add_argument('--merge_epoch', type=int, default=1)
@@ -149,7 +149,7 @@ def main():
     swa_scheduler = SWALR(optimizer, swa_lr=0.05)
 
     timestr = time.strftime("%y%m%d-%H%M%S")
-    log_path = f'{args.log_dir}/Cifar100/ema-{args.model}-{args.seed}-{timestr}'
+    log_path = f'{args.log_dir}/Cifar100/{args.opt}-{args.model}-{args.seed}-{timestr}'
     if not os.path.exists(log_path):
         os.makedirs(log_path)
 

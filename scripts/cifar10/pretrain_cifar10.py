@@ -82,6 +82,25 @@ def train_step(device, epoch, model, train_loader, optimizer, criterion, val_loa
                 del ada_optimizer
                 gc.collect()
                 torch.cuda.empty_cache()
+    
+    if len(state_dict_list) != 0:
+        ada_model = MergeNet(copy.deepcopy(model), state_dict_list, temperature=args.t, k=args.merge_k).to(device)
+        ada_optimizer = torch.optim.AdamW(ada_model.collect_trainable_params(), lr=args.lr)
+
+        for merge_epoch in range(args.merge_epoch):
+            merge_step(device, epoch, ada_model, train_loader, ada_optimizer, criterion, f'Merge {merge_epoch}',)
+
+        ada_model.get_model()
+        infer_model = ada_model.infer_model.train()
+        for p in infer_model.parameters():
+            p.requires_grad = True
+        model.load_state_dict(infer_model.state_dict())
+        optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
+        state_dict_list = []
+        del ada_model
+        del ada_optimizer
+        gc.collect()
+        torch.cuda.empty_cache()
 
 def merge_step(device, epoch, model, train_loader, optimizer, criterion, descript='Train'):
     model.train()

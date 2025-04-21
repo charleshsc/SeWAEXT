@@ -172,7 +172,7 @@ def main():
 
         ema_model.update(model.module)
         
-        if (epoch+1) % args.merge_number = 0:
+        if (epoch+1) % args.merge_number == 0:
             ema_model.apply(model.module)
 
         if rank == 0:

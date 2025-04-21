@@ -171,7 +171,7 @@ def main():
 
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device, epoch, writer, rank)
         
-        if (epoch+1) % args.merge_number = 0:
+        if (epoch+1) % args.merge_number == 0:
             swa_model.update_parameters(model.module)
             swa_scheduler.step()  # 调整 lr
             update_bn_custom(train_loader, swa_model)
