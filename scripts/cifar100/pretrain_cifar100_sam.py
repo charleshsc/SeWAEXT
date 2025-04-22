@@ -115,8 +115,8 @@ def main():
     parser.add_argument("--lr_decay", action='store_true')
 
     parser.add_argument('--opt', type=str, default='sam', choices=['merge', 'normal', 'sam'])
-    parser.add_argument('--merge_number', type=int, default=100)
-    parser.add_argument('--merge_k', type=int, default=20)
+    parser.add_argument('--merge_number', type=int, default=50)
+    parser.add_argument('--merge_k', type=int, default=10)
     parser.add_argument('--merge_epoch', type=int, default=1)
     parser.add_argument('--t', type=float, default=1.0)
     

@@ -21,6 +21,8 @@ from decimal import Decimal
 from src.dataset import get_data_loader
 from src.model import ResNet5, ResNet3, ResNet1
 from src.merge_utils import MergeNet
+from src.swa import update_bn_custom
+
 
 def set_seed(seed):
     random.seed(seed)
@@ -74,7 +76,7 @@ def train_step(device, epoch, model, train_loader, optimizer, criterion, val_loa
             for p in infer_model.parameters():
                 p.requires_grad = True
             model.load_state_dict(infer_model.state_dict())
-            optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
+            # optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
             state_dict_list = []
             del ada_model
             gc.collect()
@@ -91,7 +93,7 @@ def train_step(device, epoch, model, train_loader, optimizer, criterion, val_loa
         for p in infer_model.parameters():
             p.requires_grad = True
         model.load_state_dict(infer_model.state_dict())
-        optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
+        # optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
         state_dict_list = []
         del ada_model
         gc.collect()
@@ -173,8 +175,8 @@ def main():
     parser.add_argument("--lr_decay", action='store_true')
 
     parser.add_argument('--opt', type=str, default='random', choices=['merge', 'normal', 'random'])
-    parser.add_argument('--merge_number', type=int, default=100)
-    parser.add_argument('--merge_k', type=int, default=20)
+    parser.add_argument('--merge_number', type=int, default=50)
+    parser.add_argument('--merge_k', type=int, default=10)
     parser.add_argument('--merge_epoch', type=int, default=1)
     parser.add_argument('--t', type=float, default=1.0)
     
@@ -209,6 +211,7 @@ def main():
     # 主循环
     for epoch in trange(args.epochs, desc="Epochs",):
         train_step(device, epoch, model, train_loader, optimizer, criterion, val_loader, 'Train', args)
+        update_bn_custom(train_loader, model)
         train_acc.append(test(device, model, train_loader, criterion, 'Train_ACC'))
         val_acc.append(test(device, model, test_loader, criterion, 'Test_ACC'))
         scheduler.step()

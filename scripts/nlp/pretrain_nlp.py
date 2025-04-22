@@ -19,6 +19,7 @@ from datasets import load_dataset
 from src.dataset import get_data_loader
 from src.model import TransformerClassifier
 from src.merge_utils import MergeNet
+from src.swa import update_bn_custom
 
 def set_seed(seed):
     random.seed(seed)
@@ -64,10 +65,10 @@ parser.add_argument('--num_classes', type=int, default=4)
 parser.add_argument('--max_len', type=int, default=512)
 
 parser.add_argument('--opt', type=str, default='merge')
-parser.add_argument('--save_interval', type=int, default=5)
-parser.add_argument('--merge_number', type=int, default=10)
-parser.add_argument('--merge_k', type=int, default=5)
-parser.add_argument('--merge_epoch', type=int, default=3)
+parser.add_argument('--save_interval', type=int, default=1)
+parser.add_argument('--merge_number', type=int, default=50)
+parser.add_argument('--merge_k', type=int, default=10)
+parser.add_argument('--merge_epoch', type=int, default=1)
 parser.add_argument('--t', type=float, default=1.0)
 args = parser.parse_args()
 set_seed(args.seed)
@@ -178,6 +179,7 @@ for epoch in range(args.epochs):
 
         global_iter += 1
         if global_iter % 100 == 0:
+            update_bn_custom(train_loader, model)
             train_acc.append(test(model, train_loader, device, 'Train'))
             val_acc.append(test(model, test_loader, device, 'Test'))
 
