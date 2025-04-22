@@ -334,7 +334,7 @@ if __name__ == '__main__':
     parser.add_argument('--mode', type=str, default='normal')  # normal for standard setting, delayed for sparse
     parser.add_argument('--K', type=int, default=20)
     parser.add_argument('--pct_traj', type=float, default=1.)
-    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--model_type', type=str, default='dt')  # dt for decision transformer, bc for behavior cloning
     parser.add_argument('--embed_dim', type=int, default=128)
     parser.add_argument('--n_layer', type=int, default=3)
@@ -352,10 +352,10 @@ if __name__ == '__main__':
     parser.add_argument('--save_path', type=str, default='./results/DT/')
     
     parser.add_argument('--opt', type=str, default='merge', choices=['merge', 'normal'])
-    parser.add_argument('--save_interval', type=int, default=5)
+    parser.add_argument('--save_interval', type=int, default=1)
     parser.add_argument('--merge_number', type=int, default=100)
     parser.add_argument('--merge_k', type=int, default=10)
-    parser.add_argument('--merge_epoch', type=int, default=2)
+    parser.add_argument('--merge_epoch', type=int, default=1)
     parser.add_argument('--merge_steps', type=int, default=100)
     parser.add_argument('--t', type=float, default=1.0)
 

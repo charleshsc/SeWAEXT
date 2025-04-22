@@ -118,7 +118,7 @@ def main():
     parser.add_argument('--use-wandb', action='store_true', help='Use Weights & Biases logging')
 
     parser.add_argument('--opt', type=str, default='swa')
-    parser.add_argument('--save_interval', type=int, default=5)
+    parser.add_argument('--save_interval', type=int, default=1)
     parser.add_argument('--merge_number', type=int, default=5)
     parser.add_argument('--merge_k', type=int, default=2)
     parser.add_argument('--merge_epoch', type=int, default=1)

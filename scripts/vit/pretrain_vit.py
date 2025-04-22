@@ -18,7 +18,7 @@ from src.vit import VisionTransformer
 from src.dataset import build_imagenet_dataset
 from src.merge_utils import MergeNet
 from logger import logger, setup_logger
-
+from src.swa import update_bn_custom
 
 def train_one_epoch(model, loader, optimizer, criterion, device, epoch, writer, rank, descript='Train'):
     model.train()
@@ -116,7 +116,7 @@ def main():
     parser.add_argument('--use-wandb', action='store_true', help='Use Weights & Biases logging')
 
     parser.add_argument('--opt', type=str, default='merge')
-    parser.add_argument('--save_interval', type=int, default=5)
+    parser.add_argument('--save_interval', type=int, default=1)
     parser.add_argument('--merge_number', type=int, default=4)
     parser.add_argument('--merge_k', type=int, default=2)
     parser.add_argument('--merge_epoch', type=int, default=1)
@@ -137,10 +137,6 @@ def main():
     rank = dist.get_rank()
 
     # print(f"[RANK {dist.get_rank()}] Using GPU: {args.local_rank} / Total visible GPUs: {torch.cuda.device_count()}")
-
-    if args.use_wandb and rank == 0:
-        import wandb
-        wandb.init(project="vit-imagenet", config=vars(args))
 
     model = VisionTransformer()
     model = model.to(device)
@@ -166,69 +162,66 @@ def main():
             train_sampler.set_epoch(epoch)
 
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device, epoch, writer, rank)
-        val_loss, val_acc = validate(model, val_loader, criterion, device, epoch, writer, rank)
 
-        if epoch % 5 != 1:
-            state_dict_list.append(model.module.state_dict())
-        
-        if len(state_dict_list) == args.merge_number:
-            eval_logits = []
-            val_accs = []
-            ada_model = MergeNet(copy.deepcopy(model.module), state_dict_list, temperature=args.t, k=args.merge_k).to(device)
-            ada_model = DDP(ada_model, device_ids=[args.local_rank])
-            ada_optimizer = torch.optim.AdamW(ada_model.module.collect_trainable_params(), lr=args.lr)
-
-            train_loader_, val_loader_, train_sampler_ = build_imagenet_dataset(
-                args.data_path, 64, args.num_workers, distributed=True
-            )
-            for merge_epoch in range(args.merge_epoch):
-                if train_sampler_:
-                    train_sampler_.set_epoch(merge_epoch)
-
-                train_loss_, train_acc_ = train_one_epoch(ada_model, train_loader_, ada_optimizer, criterion, device, epoch, None, rank, 'Merge')
-                logit = ada_model.module.get_model(rank=rank)
-                val_loss_, val_acc_ = validate(ada_model, val_loader_, criterion, device, epoch, None, rank, True, 'Merge Val')
-                eval_logits.append(ada_model.module.mask_logit.detach().cpu().numpy())   
-                val_accs.append(val_acc_)
+        if 'merge' in args.opt:
+            if epoch % 5 != 1:
+                state_dict_list.append(model.module.state_dict())
             
-            ada_model.module.get_model()
-            infer_model = ada_model.module.infer_model.train()
-            for p in infer_model.parameters():
-                p.requires_grad = True
-            model.module.load_state_dict(infer_model.state_dict())
-            optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
-            state_dict_list = []
-            del ada_model
-            del ada_optimizer
-            gc.collect()
-            torch.cuda.empty_cache()
+            if len(state_dict_list) == args.merge_number:
+                eval_logits = []
+                val_accs = []
+                ada_model = MergeNet(copy.deepcopy(model.module), state_dict_list, temperature=args.t, k=args.merge_k).to(device)
+                ada_model = DDP(ada_model, device_ids=[args.local_rank])
+                ada_optimizer = torch.optim.AdamW(ada_model.module.collect_trainable_params(), lr=args.lr)
 
-            if rank == 0:
-                logger.log(f'epoch {epoch}')
-                logger.log(str(eval_logits))
-                logger.log(str(val_accs))
+                train_loader_, val_loader_, train_sampler_ = build_imagenet_dataset(
+                    args.data_path, 64, args.num_workers, distributed=True
+                )
+                for merge_epoch in range(args.merge_epoch):
+                    if train_sampler_:
+                        train_sampler_.set_epoch(merge_epoch)
+
+                    train_loss_, train_acc_ = train_one_epoch(ada_model, train_loader_, ada_optimizer, criterion, device, epoch, None, rank, 'Merge')
+                    logit = ada_model.module.get_model(rank=rank)
+                    # val_loss_, val_acc_ = validate(ada_model, val_loader_, criterion, device, epoch, None, rank, True, 'Merge Val')
+                    eval_logits.append(ada_model.module.mask_logit.detach().cpu().numpy())   
+                    # val_accs.append(val_acc_)
+                
+                ada_model.module.get_model()
+                infer_model = ada_model.module.infer_model.train()
+                for p in infer_model.parameters():
+                    p.requires_grad = True
+                model.module.load_state_dict(infer_model.state_dict())
+                # optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
+                state_dict_list = []
+                del ada_model
+                del ada_optimizer
+                gc.collect()
+                torch.cuda.empty_cache()
+
+                if rank == 0:
+                    logger.log(f'epoch {epoch}')
+                    logger.log(str(eval_logits))
+                    # logger.log(str(val_accs))
+            
+                update_bn_custom(train_loader, model.module)
+        
+        val_loss, val_acc = validate(model, val_loader, criterion, device, epoch, writer, rank)
 
         if rank == 0:
             tqdm.write(f"[Epoch {epoch}] "
                        f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}% | "
                        f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
-
-            if args.use_wandb:
-                wandb.log({
-                    "train/loss": train_loss,
-                    "train/acc": train_acc,
-                    "val/loss": val_loss,
-                    "val/acc": val_acc,
-                    "epoch": epoch
-                })
+            
+            logger.log(f"[Epoch {epoch}] "
+                       f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}% | "
+                       f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
 
             # if epoch % 1 == 0:
             #     save_checkpoint(model, epoch, log_dir)
 
     if rank == 0:
         writer.close()
-        if args.use_wandb:
-            wandb.finish()
 
 
 if __name__ == '__main__':

@@ -66,7 +66,8 @@ def train_step(device, epoch, model, train_loader, optimizer, criterion, val_loa
                 'loss': f"{train_loss/(batch_idx+1):.3f}",
                 'acc': f"{100.*correct/total:.2f}%"
             })
-        
+    
+    return train_loss/(batch_idx+1)
         
 
 def merge_step(device, epoch, model, train_loader, optimizer, criterion, descript='Train'):
@@ -179,12 +180,14 @@ def main():
     learning_rates_log = []
     train_acc = []
     val_acc = []
+    train_losses = []
 
     # 主循环
     for epoch in trange(args.epochs, desc="Epochs",):
-        train_step(device, epoch, model, train_loader, optimizer, criterion, val_loader, 'Train', args)
+        train_loss = train_step(device, epoch, model, train_loader, optimizer, criterion, val_loader, 'Train', args)
         train_acc.append(test(device, model, train_loader, criterion, 'Train_ACC'))
         val_acc.append(test(device, model, test_loader, criterion, 'Test_ACC'))
+        train_losses.append(train_loss)
         scheduler.step()
         learning_rates_log.append(scheduler.get_last_lr())
 
@@ -192,6 +195,8 @@ def main():
         np.save(f, np.array(train_acc))
     with open(os.path.join(log_path, 'val_acc.npy'), 'wb') as f:
         np.save(f, np.array(val_acc))
+    with open(os.path.join(log_path, 'train_loss.npy'), 'wb') as f:
+        np.save(f, np.array(train_losses))
     
     plt.figure()
     plt.plot(train_acc, label='Train Accuracy')
