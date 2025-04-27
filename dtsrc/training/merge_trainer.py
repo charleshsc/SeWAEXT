@@ -5,9 +5,10 @@ import time
 import os 
 import gc
 
-
 from tqdm import trange
 from dtsrc.training.merge_utils import MergeNet
+from dtsrc.training.merge_utils import update_bn_custom
+
 
 def save_checkpoint(state,name):
   filename =name
@@ -46,14 +47,20 @@ class Trainer:
             if self.scheduler is not None:
                 self.scheduler.step()
 
-            self.state_dict_list.append(self.model.state_dict())
+            if i % self.variant['save_interval'] == 0:
+                self.state_dict_list.append(self.model.state_dict())
+            
             if len(self.state_dict_list) == self.variant['merge_number']:
                 self.merge_model(self.variant['merge_steps'], iter_num, i, logger)
 
+        if len(self.state_dict_list) != 0:
+            self.merge_model(self.variant['merge_steps'], iter_num, num_steps, logger)
+        
         logs['time/training'] = time.time() - train_start
 
         eval_start = time.time()
 
+        update_bn_custom(self.get_batch, self.model, steps=num_steps, batch_size=self.batch_size)
         self.model.eval()
         for eval_fn in self.eval_fns:
             outputs = eval_fn(self.model)
@@ -108,7 +115,7 @@ class Trainer:
         for p in infer_model.parameters():
             p.requires_grad = True
         self.model.load_state_dict(infer_model.state_dict())
-        self.optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
+        # self.optimizer.state_dict()['state'].clear()  # 清空优化器的状态字典
         self.state_dict_list = []
         del ada_model
         del ada_optimizer

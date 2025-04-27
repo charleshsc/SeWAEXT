@@ -17,8 +17,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from decimal import Decimal
+from torch.nn.modules.batchnorm import _BatchNorm
 
-def load_and_average_models(model, model_list, steps):
+def load_and_average_models(model, model_list, steps, last_model=None, add_decay=True):
     target = copy.deepcopy(model)
 
     average_params = None
@@ -44,6 +45,9 @@ def load_and_average_models(model, model_list, steps):
         count += 1
         print(f"Successfully loaded and added model {i}")
 
+    if last_model is not None:
+        last_model_params = last_model
+    
     # 计算平均值
     if count > 0:
         for key in average_params:
@@ -55,6 +59,14 @@ def load_and_average_models(model, model_list, steps):
         print("Successfully averaged model parameters.")
     else:
         print("No models were loaded for averaging.")
+    
+    if add_decay:
+        decay = 0.9
+        for name, param in last_model_params.items():
+            if name in last_model_params and param.dtype.is_floating_point:
+                average_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
+            else:
+                average_params[name] = param.clone().detach()
 
     target.load_state_dict(average_params)
     return target
@@ -237,7 +249,7 @@ class MergeNet(nn.Module):
         out = self.model(*args, **kwargs)
         return out
     
-    def get_model(self, logger=None, rank=0):
+    def get_model(self, logger=None, rank=0, add_decay=True):
         mask = self.compute_mask(eval=True)
         if logger is not None and rank == 0:
             logger.log(mask)
@@ -258,10 +270,46 @@ class MergeNet(nn.Module):
             if logit == 1:
                 select_model.append(self.model_list[i])
                 steps.append(i)
-        self.infer_model = load_and_average_models(self.infer_model, select_model, steps)
+        self.infer_model = load_and_average_models(self.infer_model, select_model, steps, self.model_list[-1], add_decay)
         return mask
 
     def get_action(self, x):
         self.infer_model.to(device=self.device)
         out = self.infer_model(x)
         return out
+
+@torch.no_grad()
+def update_bn_custom(get_batch, model, device=None, steps=100, batch_size=128):
+    """
+    自定义 update_bn,确保数据被移动到模型所在设备。
+    """
+    if device is None:
+        device = next(model.parameters()).device
+
+    model.train()
+    momenta = {}
+    num_samples = 0
+
+    def _reset_bn(module):
+        if isinstance(module, _BatchNorm):
+            module.running_mean.zero_()
+            module.running_var.fill_(1)
+            momenta[module] = module.momentum
+
+    model.apply(_reset_bn)
+
+    for i in range(steps):
+        states, actions, rewards, dones, rtg, timesteps, attention_mask = get_batch(batch_size)
+        action_target = torch.clone(actions)
+
+        momentum = batch_size / float(num_samples + batch_size)
+        for bn_module in momenta.keys():
+            bn_module.momentum = momentum
+
+        state_preds, action_preds, reward_preds = model.forward(
+            states, actions, rewards, rtg[:,:-1], timesteps, attention_mask=attention_mask,
+        )
+        num_samples += batch_size
+
+    for bn_module, momentum in momenta.items():
+        bn_module.momentum = momentum

@@ -90,9 +90,30 @@ def validate(model, loader, criterion, device, epoch, writer, rank, merge=False,
     return total_loss / len(loader), acc
 
 
-def save_checkpoint(model, epoch, path="checkpoints"):
-    os.makedirs(path, exist_ok=True)
-    torch.save(model.module.state_dict(), os.path.join(path, f"vit_epoch_{epoch}.pth"))
+def save_checkpoint(model, optimizer, scheduler, epoch, log_dir):
+    if dist.get_rank() == 0:
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.module.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+            'log_dir': log_dir,  # 保存 TensorBoard 日志路径
+        }, log_dir + '/checkpoint.pth')
+
+def load_checkpoint(model, optimizer, scheduler, path):
+    path = path + '/checkpoint.pth'
+    checkpoint = torch.load(path, map_location="cpu")
+
+    model.module.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    if scheduler and checkpoint.get("scheduler_state_dict"):
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+    start_epoch = checkpoint['epoch'] + 1
+    log_dir = checkpoint.get("log_dir")
+
+    return start_epoch, log_dir
 
 def set_seed(seed):
     random.seed(seed)
@@ -116,6 +137,7 @@ def main():
     parser.add_argument('--use-wandb', action='store_true', help='Use Weights & Biases logging')
 
     parser.add_argument('--opt', type=str, default='merge')
+    parser.add_argument('--resume', type=str, default='/ailab/user/hushengchao/GDT/opt/results/vit/merge_123_250424-095719')
     parser.add_argument('--save_interval', type=int, default=1)
     parser.add_argument('--merge_number', type=int, default=4)
     parser.add_argument('--merge_k', type=int, default=2)
@@ -124,12 +146,6 @@ def main():
     args = parser.parse_args()
 
     set_seed(args.seed)
-
-    log_dir = args.log_dir
-    timestr = time.strftime("%y%m%d-%H%M%S")
-    log_dir = log_dir + f'/{args.opt}_{args.seed}_{timestr}'
-    Path(log_dir).mkdir(exist_ok=True, parents=True)
-    setup_logger(variant=vars(args), log_dir=log_dir)
 
     dist.init_process_group(backend='nccl')
     torch.cuda.set_device(args.local_rank)
@@ -149,12 +165,23 @@ def main():
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
 
+    if args.resume is None:
+        log_dir = args.log_dir
+        timestr = time.strftime("%y%m%d-%H%M%S")
+        log_dir = log_dir + f'/{args.opt}_{args.seed}_{timestr}'
+        Path(log_dir).mkdir(exist_ok=True, parents=True)
+        setup_logger(variant=vars(args), log_dir=log_dir)
+        start_epoch = 1
+    else:
+        start_epoch, log_dir = load_checkpoint(model, optimizer, None, args.resume)
+        setup_logger(variant=vars(args), log_dir=log_dir)
+
     if rank == 0:
         writer = SummaryWriter(log_dir=log_dir)
     else:
         writer = None
 
-    epoch_bar = tqdm(range(1, args.epochs + 1), desc="Epochs", disable=(rank != 0))
+    epoch_bar = tqdm(range(start_epoch, args.epochs + 1), desc="Epochs", disable=(rank != 0))
 
     state_dict_list = []
     for epoch in epoch_bar:
@@ -219,6 +246,8 @@ def main():
 
             # if epoch % 1 == 0:
             #     save_checkpoint(model, epoch, log_dir)
+        
+            save_checkpoint(model, optimizer, None, epoch, log_dir)
 
     if rank == 0:
         writer.close()
